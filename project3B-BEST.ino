@@ -16,6 +16,22 @@
  *  
 */
 
+// uncomment the following line to enable Serial prints
+
+//#define DEBUG
+
+#ifdef DEBUG
+  #define DEBUG_PRINT(x)  Serial.print (x)
+#else
+  #define DEBUG_PRINT(x)
+#endif
+#ifdef DEBUG
+  #define DEBUG_PRINTLN(x)  Serial.println (x)
+#else
+  #define DEBUG_PRINTLN(x)
+#endif
+
+
 
 
 #include <Adafruit_NeoPixel.h>
@@ -44,7 +60,9 @@ Adafruit_NeoPixel strip_left (PIXEL_COUNT_LEFT, PIXEL_PIN_LEFT, NEO_GRB + NEO_KH
 
 
 // timer for the heartbeat signal (in multiples of TIMER2 cycles). 
-#define BLINKINGTIMER 128
+#define BLINKINGTIMER 32
+#define BLINK_DURATION 4
+bool timeToBlink = false; 
 
 
 #include <Wire.h>
@@ -139,27 +157,27 @@ void setup() {
   // Serial output
   Serial.begin(115200);
 
-  Serial.println("LED strip initialisation");
+  DEBUG_PRINTLN("LED strip initialisation");
   setupLEDStrip(&strip_right);
   setupLEDStrip(&strip_left);
 
-  Serial.println("MPU initialisation");
+  DEBUG_PRINTLN("MPU initialisation");
   leftEnabled = setupMPU(&mpuLeft, MPULEFT);
   rightEnabled = setupMPU(&mpuRight, MPURIGHT);
 
 
-  Serial.println("Timer initialisation");
+  DEBUG_PRINTLN("Timer initialisation");
   setupTimer();
 
 
-  Serial.println("Output pins");
+  DEBUG_PRINTLN("Output pins");
 
   //set pins as outputs
   pinMode(8, OUTPUT);
   pinMode(9, OUTPUT);
   pinMode(13, OUTPUT);
 
-  Serial.println("Ready to go!");
+  DEBUG_PRINTLN("Ready to go!");
 
 }//end setup
 
@@ -188,9 +206,6 @@ void loop() {
     maRollRight [counter] = (atan2(normAccelRight.YAxis, normAccelRight.ZAxis) * 180.0) / M_PI;;
     maRollLeft [counter] = (atan2(normAccelLeft.YAxis, normAccelLeft.ZAxis) * 180.0) / M_PI;;
 
-    // heartbeat to confirm everything is working 
-    // doubles up as alert for drivers coming from behind
-    blinkingCounter = (blinkingCounter + 1) % BLINKINGTIMER;
     counter = (counter + 1) % MOVINGAVERAGE;
 
     // plot only every MOVINGAVERAGE new data
@@ -203,18 +218,17 @@ void loop() {
   if (timeToPlot) {
     timeToPlot = false;
 
-/*
+
     // Print the stored data on the serial port for debugging. 
     for (int i = 0; i < MOVINGAVERAGE; i++) {
-      Serial.print(maRollLeft[i]);
-      Serial.print("\t");
+      DEBUG_PRINT(maRollLeft[i]);
+      DEBUG_PRINT("\t");
     }
     for (int i = 0; i < MOVINGAVERAGE; i++) {
-      Serial.print(maRollRight[i]);
-      Serial.print("\t");
+      DEBUG_PRINT(maRollRight[i]);
+      DEBUG_PRINT("\t");
     }
-    Serial.print("\n");
-*/
+    DEBUG_PRINT("\n");
 
     /*  This section checks which arm is up.
          Not the best code ever, but somehow it works.
@@ -292,8 +306,8 @@ void loop() {
     strip_right.show();
   }
 
-  // Serial.println(blinkingCounter);
-  if (!blinkingCounter && !leftAnimation && !rightAnimation) {
+  // DEBUG_PRINTLN(blinkingCounter);
+  if (timeToBlink && !leftAnimation && !rightAnimation) {
     // for future use
     // heartBeatToggle = !heartBeatToggle;
     /*    if (heartBeatToggle) {
@@ -303,8 +317,8 @@ void loop() {
           blinkStrip(&strip_left, COLOUR_GREEN, 0);
         }
     */
-    blinkStrip(&strip_right, COLOUR_RED, 0);
-    blinkStrip(&strip_left, COLOUR_RED, 0);
+    blinkStrip(&strip_right, COLOUR_RED, BLINK_DURATION);
+    blinkStrip(&strip_left, COLOUR_RED, BLINK_DURATION);
     
   }
 
@@ -444,15 +458,20 @@ unsigned long t0counter = 0;
 
 ISR(TIMER1_COMPA_vect) {
   // Timer 1 : 1 second
-  //Serial.println("Time to plot");
+  //DEBUG_PRINTLN("Time to plot");
   // timeToPlot = true;
 
-  if ((t1counter++ % 10) == 0)
+    // heartbeat to confirm everything is working 
+    // doubles up as alert for drivers coming from behind
+//    blinkingCounter = (blinkingCounter + 1) % BLINKINGTIMER;
+  if ((t1counter++ % BLINK_DURATION) == 0)
   {
-    //Serial.println(millis());
-    //Serial.println(t2counter);
+    timeToBlink = true; 
 
   }
+  else {
+        timeToBlink = false; 
+    }
 
 }
 
@@ -462,8 +481,8 @@ ISR(TIMER2_COMPA_vect) {
   // -> division by 10 of the counter
   if ((t2counter++ % 10) == 0)
   {
-    //Serial.println(millis());
-    //Serial.println(t2counter);
+    //DEBUG_PRINTLN(millis());
+    //DEBUG_PRINTLN(t2counter);
     newDataAvailable = true;
   }
 }
@@ -472,14 +491,20 @@ ISR(TIMER2_COMPA_vect) {
 
 
 void setupTimer() {
-  // TIMER 1 for interrupt frequency 1 Hz:
+  // calculations from http://www.8bit-era.cz/arduino-timer-interrupts-calculator.html
+  
+  // TIMER 1 for interrupt frequency 10 Hz:
   cli(); // stop interrupts
   TCCR1A = 0; // set entire TCCR1A register to 0
   TCCR1B = 0; // same for TCCR1B
   TCNT1  = 0; // initialize counter value to 0
-  OCR1A = 62499; // = 16000000 / (256 * 1) - 1 (must be <65536)
+  // set compare match register for 10 Hz increments
+  OCR1A = 24999; // = 16000000 / (64 * 10) - 1 (must be <65536)
+  // turn on CTC mode
   TCCR1B |= (1 << WGM12);
-  TCCR1B |= (1 << CS12) | (0 << CS11) | (0 << CS10);
+  // Set CS12, CS11 and CS10 bits for 64 prescaler
+  TCCR1B |= (0 << CS12) | (1 << CS11) | (1 << CS10);
+  // enable timer compare interrupt
   TIMSK1 |= (1 << OCIE1A);
 
   // Clear registers
@@ -496,20 +521,20 @@ void setupTimer() {
 
 
 
-// all Serial.print() instructions could be removed without problems. 
+// all DEBUG_PRINT() instructions could be removed without problems. 
 boolean setupMPU (MPU6050* mpu, int MPU_address) {
   // Initialize MPU6050
   unsigned int counter = 0;
-  //Serial.println (MPU_address, HEX);
+  //DEBUG_PRINTLN (MPU_address, HEX);
   while (!mpu->begin(MPU6050_SCALE_2000DPS, MPU6050_RANGE_2G, MPU_address))
   {
-    Serial.print(counter++);
-    Serial.print(": Could not find a valid MPU6050 sensor at 0x");
-    Serial.print (MPU_address, HEX);
-    Serial.println(", check wiring!");
+    DEBUG_PRINT(counter++);
+    DEBUG_PRINT(": Could not find a valid MPU6050 sensor at 0x");
+    DEBUG_PRINT (String(MPU_address, HEX));
+    DEBUG_PRINTLN(", check wiring!");
     delay(500);
   }
-  Serial.println("Calibration!");
+  DEBUG_PRINTLN("Calibration!");
 
   // Calibrate gyroscope. The calibration must be at rest.
   // If you don't want calibrate, comment this line.
@@ -519,9 +544,9 @@ boolean setupMPU (MPU6050* mpu, int MPU_address) {
   // If you don't want use threshold, comment this line or set 0.
   mpu->setThreshold(3);
 
-  Serial.print("MPU6050 sensor at 0x");
-  Serial.print (MPU_address, HEX);
-  Serial.println(" ready!");
+  DEBUG_PRINT("MPU6050 sensor at 0x");
+  DEBUG_PRINT (String(MPU_address, HEX));
+  DEBUG_PRINTLN(" ready!");
   return true;
 }
 
